@@ -16,5 +16,7 @@ class Attendance extends Model
         'check_out_time',
         'check_out_location',
         'date',
+        'status_check_in', 
+        'status_check_out',
     ];
 }
