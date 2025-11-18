@@ -13,87 +13,113 @@ use Illuminate\Support\Facades\Auth;
 
 class PayrollController extends Controller
 {
+    /**
+     * Generate slip gaji untuk seorang user pada bulan dan tahun tertentu.
+     */
     public function generate($userId, $year, $month)
     {
         $user = User::findOrFail($userId);
-        $startDate = Carbon::createFromDate($year, $month, 1);
+        $startDate = Carbon::create($year, $month, 1)->startOfDay();
         $endDate = $startDate->copy()->endOfMonth();
-        $daysInMonth = $startDate->daysInMonth;
-
+        
+        // --- ATURAN GAJI ---
         $gajiPokokHarian = 50000;
-        $potonganTelat = 25000;
+        $potonganTelat = 20000;
         $tunjanganHarian = 25000;
         $pajakBulanan = 100000;
 
         $totalGajiPokok = 0;
         $totalTunjangan = 0;
-        $totalPotongan = 0;
+        $totalPotonganHarian = 0;
+        $detailPerHari = [];
 
-        // Ambil semua data absensi dan cuti di bulan tersebut
+        // Ambil semua data absensi & cuti di bulan tersebut untuk efisiensi
         $attendances = Attendance::where('user_id', $userId)
             ->whereBetween('date', [$startDate, $endDate])
-            ->get()->keyBy('date');
+            ->get()->keyBy(fn($item) => Carbon::parse($item->date)->toDateString());
             
         $leaves = LeaveRequest::where('user_id', $userId)
             ->where('status', 'approved')
-            ->where(function($query) use ($startDate, $endDate) {
-                $query->whereBetween('start_date', [$startDate, $endDate])
-                      ->orWhereBetween('end_date', [$startDate, $endDate]);
-            })->get();
+            ->get();
 
         // Loop setiap hari dalam sebulan
-        for ($day = 1; $day <= $daysInMonth; $day++) {
-            $currentDate = Carbon::createFromDate($year, $month, $day);
-            $dateString = $currentDate->toDateString();
+        for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
+            $dateString = $date->toDateString();
+            $statusHariIni = 'Alpha';
+            $gajiHariIni = 0;
+            $tunjanganHariIni = 0;
+            $potonganHariIni = 0;
 
+            // 1. Cek Cuti/Izin yang disetujui
             $isOnLeave = false;
             foreach ($leaves as $leave) {
-                if ($currentDate->between(Carbon::parse($leave->start_date), Carbon::parse($leave->end_date))) {
+                if ($date->between(Carbon::parse($leave->start_date), Carbon::parse($leave->end_date))) {
+                    $statusHariIni = $leave->type;
                     if ($leave->type === 'cuti') {
-                        $totalGajiPokok += $gajiPokokHarian;
+                        $gajiHariIni = $gajiPokokHarian;
                     }
-                    // Jika 'izin' atau 'alpha', tidak dapat apa-apa
                     $isOnLeave = true;
                     break;
                 }
             }
 
-            if (!$isOnLeave && isset($attendances[$dateString])) {
+            // 2. Jika tidak cuti/izin, cek data absensi
+            if (!$isOnLeave && $attendances->has($dateString)) {
                 $attendance = $attendances[$dateString];
                 
-                // Asumsi jam kerja 09:00 - 17:00
-                $jamMasuk = Carbon::parse($attendance->check_in_time);
-                $jamPulang = Carbon::parse($attendance->check_out_time);
-                $isTelat = $jamMasuk->hour > 9;
-                $isPulangCepat = $jamPulang->hour < 17;
+                if($attendance->check_in_time && $attendance->check_out_time){
+                    $statusHariIni = 'Hadir';
+                    $tunjanganHariIni = $tunjanganHarian;
 
-                if ($isTelat || $isPulangCepat) {
-                    $totalGajiPokok += ($gajiPokokHarian - $potonganTelat);
-                    $totalPotongan += $potonganTelat;
-                } else {
-                    $totalGajiPokok += $gajiPokokHarian;
+                    if ($attendance->status_check_in === 'Telat' || $attendance->status_check_out === 'Pulang Awal') {
+                        $gajiHariIni = $gajiPokokHarian - $potonganTelat;
+                        $potonganHariIni = $potonganTelat;
+                    } else {
+                        $gajiHariIni = $gajiPokokHarian;
+                    }
                 }
-                $totalTunjangan += $tunjanganHarian;
             }
+            
+            $totalGajiPokok += $gajiHariIni;
+            $totalTunjangan += $tunjanganHariIni;
+            $totalPotonganHarian += $potonganHariIni;
+            
+            $detailPerHari[] = [
+                'tanggal' => $dateString,
+                'status' => $statusHariIni,
+                'gaji_harian' => $gajiHariIni,
+                'tunjangan_harian' => $tunjanganHariIni,
+                'potongan_harian' => $potonganHariIni,
+                'pendapatan_hari_itu' => $gajiHariIni + $tunjanganHariIni,
+            ];
         }
         
         $gajiKotor = $totalGajiPokok + $totalTunjangan;
-        $gajiBersih = $gajiKotor - $pajakBulanan;
+        $totalSemuaPotongan = $totalPotonganHarian + $pajakBulanan;
+        $gajiBersih = $gajiKotor - $totalSemuaPotongan;
+
+        if ($gajiBersih < 0) {
+            $gajiBersih = 0;
+        }
 
         $payroll = Payroll::updateOrCreate(
             ['user_id' => $userId, 'month' => $month, 'year' => $year],
             [
                 'total_gaji_pokok' => $totalGajiPokok,
                 'total_tunjangan' => $totalTunjangan,
-                'total_potongan' => $totalPotongan + $pajakBulanan,
+                'total_potongan' => $totalSemuaPotongan,
                 'pajak' => $pajakBulanan,
                 'gaji_bersih' => $gajiBersih,
+                'detail' => json_encode($detailPerHari)
             ]
         );
 
         return response()->json(['message' => 'Slip gaji berhasil dibuat.', 'data' => $payroll]);
     }
 
+    /**
+     * Menampilkan slip gaji untuk karyawan yang sedang login.
+     */
     public function showForEmployee($year, $month)
     {
         $payroll = Payroll::where('user_id', Auth::id())
@@ -107,16 +133,42 @@ class PayrollController extends Controller
         return response()->json($payroll);
     }
 
+    /**
+     * Menampilkan slip gaji untuk user tertentu (dilihat oleh admin).
+     */
     public function showForAdmin($userId, $year, $month)
     {
         $payroll = Payroll::where('user_id', $userId)
             ->where('month', $month)
             ->where('year', $year)
             ->first();
-
+                
         if (!$payroll) {
             return response()->json(['message' => 'Slip gaji untuk periode ini tidak ditemukan.'], 404);
         }
         return response()->json($payroll);
+    }
+
+    /**
+     * Memberikan ringkasan total gaji semua karyawan pada periode tertentu.
+     */
+    public function getPayrollSummary($year, $month)
+    {
+        $payrolls = Payroll::where('year', $year)->where('month', $month)->get();
+
+        if ($payrolls->isEmpty()) {
+            return response()->json(['message' => 'Tidak ada data gaji untuk periode ini.'], 404);
+        }
+
+        $summary = [
+            'periode' => "{$year}-{$month}",
+            'jumlah_karyawan_digaji' => $payrolls->count(),
+            'total_gaji_pokok' => $payrolls->sum('total_gaji_pokok'),
+            'total_tunjangan' => $payrolls->sum('total_tunjangan'),
+            'total_potongan' => $payrolls->sum('total_potongan'),
+            'total_gaji_bersih' => $payrolls->sum('gaji_bersih'),
+        ];
+
+        return response()->json($summary);
     }
 }
