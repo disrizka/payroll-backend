@@ -18,5 +18,7 @@ class Attendance extends Model
         'date',
         'status_check_in', 
         'status_check_out',
+        'potongan_check_in',
+        'potongan_check_out',
     ];
 }
