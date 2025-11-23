@@ -27,6 +27,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Grup Rute Khusus Admin
     Route::middleware('can:admin')->prefix('admin')->group(function() {
+
         // Manajemen Karyawan
         Route::post('/create-employee', [AuthController::class, 'createEmployee']);
         Route::get('/employees', [AdminController::class, 'getAllEmployees']);
@@ -42,7 +43,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/payslip/generate/{userId}/{year}/{month}', [PayrollController::class, 'generate']);
         Route::get('/payslip/{userId}/{year}/{month}', [PayrollController::class, 'showForAdmin']);
         Route::get('/employee-history/{userId}', [AdminController::class, 'getEmployeeHistory']);
-        Route::get('employee-history/{userId}', [AttendanceController::class, 'historyForEmployee']);
     });
 
     // Grup Rute Khusus Karyawan
@@ -57,8 +57,10 @@ Route::middleware('auth:sanctum')->group(function () {
         // Pengajuan Cuti/Izin
         Route::post('/leave-request', [LeaveRequestController::class, 'store']);
 
-        // Slip Gaji (Live Calculation)
-        // URL akan jadi: /api/karyawan/payslip-live/{year}/{month}
+        // Slip Gaji final (yang sudah di-generate)
+        Route::get('/payslip/{year}/{month}', [PayrollController::class, 'showForEmployee']);
+
+        // Slip Gaji live calculation
         Route::get('/payslip-live/{year}/{month}', [AttendanceController::class, 'calculateLivePayslip']);
     });
 });
