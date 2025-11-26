@@ -25,9 +25,6 @@ class LeaveRequest extends Model
         'location',
     ];
 
-    /**
-     * Mendapatkan user yang memiliki leave request ini.
-     */
     public function user()
     {
         return $this->belongsTo(User::class);

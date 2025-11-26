@@ -8,12 +8,10 @@ use App\Models\LeaveRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
+use App\Models\User;
 
 class AttendanceController extends Controller
 {
-    /**
-     * Menangani proses check-in karyawan.
-     */
     public function checkIn(Request $request)
     {
         $request->validate([
@@ -23,7 +21,6 @@ class AttendanceController extends Controller
 
         $user = Auth::user();
 
-        // Cek apakah ada cuti atau izin yang disetujui hari ini
         $existingLeave = LeaveRequest::where('user_id', $user->id)
             ->where('status', 'approved')
             ->whereDate('start_date', '<=', Carbon::today())
@@ -33,7 +30,6 @@ class AttendanceController extends Controller
             return response()->json(['message' => 'Anda tidak bisa absen karena sedang ' . $existingLeave->type], 400);
         }
 
-        // Cek absensi ganda
         $todayAttendance = Attendance::where('user_id', $user->id)->whereDate('date', Carbon::today())->first();
         if ($todayAttendance) {
             return response()->json(['message' => 'Anda sudah melakukan absen masuk hari ini.'], 400);
@@ -42,19 +38,17 @@ class AttendanceController extends Controller
         $jamMasuk = Carbon::now();
         $jamMasukTime = $jamMasuk->format('H:i:s');
 
-        // Validasi batas check-in (00:01 - 09:00)
         if ($jamMasukTime > '09:00:00') {
             return response()->json(['message' => 'Waktu check-in sudah lewat batas (maksimal 09:00)'], 400);
         }
 
-        // Hitung potongan berdasarkan keterlambatan
         $jamNormal = Carbon::parse(Carbon::today()->format('Y-m-d') . ' 08:00:00');
-        $selisihMenit = $jamMasuk->diffInMinutes($jamNormal, false); // negatif jika telat
+        $selisihMenit = $jamMasuk->diffInMinutes($jamNormal, false); 
 
         $statusCheckIn = 'Tepat Waktu';
         $potonganCheckIn = 0;
 
-        if ($selisihMenit < 0) { // Telat
+        if ($selisihMenit < 0) { 
             $menitTelat = abs($selisihMenit);
 
             if ($menitTelat >= 1 && $menitTelat <= 10) {
@@ -94,9 +88,7 @@ class AttendanceController extends Controller
         ], 201);
     }
 
-    /**
-     * Menangani proses check-out karyawan.
-     */
+
     public function checkOut(Request $request)
     {
         $request->validate([
@@ -118,23 +110,20 @@ class AttendanceController extends Controller
         $jamPulang = Carbon::now();
         $jamPulangTime = $jamPulang->format('H:i:s');
 
-        // Validasi batas check-out (16:00 - 23:59)
         if ($jamPulangTime < '16:00:00') {
             return response()->json(['message' => 'Waktu check-out terlalu awal (minimal 16:00).'], 400);
         }
 
-        // Hitung potongan berdasarkan jam pulang
         $jamNormalPulang = Carbon::parse(Carbon::today()->format('Y-m-d') . ' 17:00:00');
-        $selisihMenit = $jamPulang->diffInMinutes($jamNormalPulang, false); // positif jika pulang lebih awal
+        $selisihMenit = $jamPulang->diffInMinutes($jamNormalPulang, false); 
 
         $statusCheckOut = 'Tepat Waktu';
         $potonganCheckOut = 0;
 
         if ($jamPulangTime >= '17:25:00') {
-            // Overtime
             $statusCheckOut = 'Overtime';
             $potonganCheckOut = 0;
-        } elseif ($selisihMenit > 0) { // Pulang lebih awal
+        } elseif ($selisihMenit > 0) { 
             $menitAwal = $selisihMenit;
 
             if ($menitAwal >= 1 && $menitAwal <= 10) {
@@ -169,16 +158,12 @@ class AttendanceController extends Controller
         ]);
     }
 
-    /**
-     * Menampilkan riwayat gabungan (absensi & izin/cuti) untuk karyawan.
-     */
     public function history()
     {
         $user = Auth::user();
         $attendances = Attendance::where('user_id', $user->id)->orderBy('date', 'desc')->get();
         $leaveRequests = LeaveRequest::where('user_id', $user->id)->orderBy('start_date', 'desc')->get();
 
-        // Beri status manual pending/alpha jika belum checkout
         $attendances->transform(function ($att) {
             $att->status_manual = $this->determineManualStatusForRecord($att);
             return $att;
@@ -192,9 +177,7 @@ class AttendanceController extends Controller
         return response()->json($sortedData->values()->all());
     }
 
-    /**
-     * Menampilkan riwayat absensi untuk user tertentu (dilihat oleh admin).
-     */
+    
     public function historyForAdmin($userId)
     {
         $history = Attendance::where('user_id', $userId)
@@ -207,9 +190,7 @@ class AttendanceController extends Controller
         return response()->json($history);
     }
 
-    /**
-     * Mengecek status aktivitas karyawan hari ini.
-     */
+    
     public function getTodayStatus()
     {
         $user = Auth::user();
@@ -225,7 +206,6 @@ class AttendanceController extends Controller
 
         $attendance = Attendance::where('user_id', $user->id)->whereDate('date', Carbon::today())->first();
         if ($attendance) {
-            // jika sudah check-in tapi belum checkout => pending
             if ($attendance->check_in_time && !$attendance->check_out_time) {
                 return response()->json(['status' => 'pending']);
             }
@@ -235,9 +215,7 @@ class AttendanceController extends Controller
         return response()->json(['status' => 'none']);
     }
 
-    /**
-     * Get employee history for admin (detailed)
-     */
+    
     public function historyForEmployee($userId)
     {
         try {
@@ -288,9 +266,7 @@ class AttendanceController extends Controller
         }
     }
 
-    /**
-     * Calculate live payslip (already termasuk logika pending / alpha)
-     */
+    
     public function calculateLivePayslip($year, $month)
     {
         try {
@@ -302,7 +278,6 @@ class AttendanceController extends Controller
                 $endDate = $startDate->copy()->endOfMonth();
             }
 
-            // Aturan Gaji
             $gajiPokokHarian = 50000;
             $tunjanganHarian = 25000;
             $pajakBulanan = 100000;
@@ -312,19 +287,16 @@ class AttendanceController extends Controller
             $totalPotonganHarian = 0;
             $detailPerHari = [];
 
-            // Ambil data attendance
             $attendances = Attendance::where('user_id', $user->id)
                 ->whereBetween('date', [$startDate, $endDate])
                 ->get()
                 ->keyBy(fn($item) => Carbon::parse($item->date)->toDateString());
 
-            // Ambil data leave yang approved
             $leaves = LeaveRequest::where('user_id', $user->id)
                 ->where('status', 'approved')
                 ->whereBetween('start_date', [$startDate, $endDate])
                 ->get();
 
-            // Loop per hari
             for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
                 $dateStr = $date->toDateString();
                 $attendance = $attendances->get($dateStr);
@@ -354,28 +326,23 @@ class AttendanceController extends Controller
                     $checkIn = $attendance->check_in_time ? Carbon::parse($attendance->check_in_time)->format('H:i:s') : '-';
                     $checkOut = $attendance->check_out_time ? Carbon::parse($attendance->check_out_time)->format('H:i:s') : '-';
 
-                    // Jika belum checkout
                     if (!$attendance->check_out_time) {
                         if ($date->isToday()) {
-                            // masih hari ini -> pending (tidak dibayar sementara)
                             $status = 'pending';
                             $gajiPokok = 0;
                             $tunjangan = 0;
                             $potongan = 0;
                         } else {
-                            // sudah lewat -> alpha (tidak hadir)
                             $status = 'alpha';
                             $gajiPokok = 0;
                             $tunjangan = 0;
                             $potongan = 0;
                         }
                     } else {
-                        // sudah checkout -> hitung gaji & potongan
                         $potonganCheckIn = $attendance->potongan_check_in ?? 0;
                         $potonganCheckOut = $attendance->potongan_check_out ?? 0;
 
                         if ($attendance->status_check_in === 'Alpha') {
-                            // bila check-in alpha => tidak mendapat gaji
                             $gajiPokok = 0;
                             $tunjangan = 0;
                             $potongan = 0;
@@ -447,10 +414,6 @@ class AttendanceController extends Controller
         }
     }
 
-    /**
-     * Update status pending -> tidak hadir untuk attendance yang lewat tanggalnya.
-     * (Jalankan ini via scheduler / cron setiap pagi atau manual jika perlu)
-     */
     public function updatePendingStatus()
     {
         try {
@@ -472,9 +435,6 @@ class AttendanceController extends Controller
         }
     }
 
-    /**
-     * Helper: tentukan status manual (pending/tidak hadir/hadir) untuk sebuah record attendance
-     */
     private function determineManualStatusForRecord($att)
     {
         if ($att->check_in_time && !$att->check_out_time) {
@@ -486,9 +446,7 @@ class AttendanceController extends Controller
             }
         }
 
-        // kalau sudah checkout -> hadirlah atau lihat flag lain
         if ($att->check_in_time && $att->check_out_time) {
-            // jika status_check_in alpha maka alpha
             if (isset($att->status_check_in) && $att->status_check_in === 'Alpha') {
                 return 'alpha';
             }
@@ -497,4 +455,153 @@ class AttendanceController extends Controller
 
         return 'alpha';
     }
+
+public function calculateLivePayslipForAdmin($userId, $year, $month)
+{
+    try {
+        $user = User::findOrFail($userId);
+        
+        $startDate = Carbon::create($year, $month, 1)->startOfDay();
+        $endDate = Carbon::now()->endOfDay();
+
+        if ($startDate->isBefore(Carbon::now()->startOfMonth())) {
+            $endDate = $startDate->copy()->endOfMonth();
+        }
+
+        $gajiPokokHarian = 50000;
+        $tunjanganHarian = 25000;
+        $pajakBulanan = 100000;
+
+        $totalGajiPokok = 0;
+        $totalTunjangan = 0;
+        $totalPotonganHarian = 0;
+        $detailPerHari = [];
+
+        $attendances = Attendance::where('user_id', $userId)
+            ->whereBetween('date', [$startDate, $endDate])
+            ->get()
+            ->keyBy(fn($item) => Carbon::parse($item->date)->toDateString());
+
+        $leaves = LeaveRequest::where('user_id', $userId)
+            ->where('status', 'approved')
+            ->whereBetween('start_date', [$startDate, $endDate])
+            ->get();
+
+        for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
+            $dateStr = $date->toDateString();
+            $attendance = $attendances->get($dateStr);
+
+            $leave = $leaves->first(function($l) use ($date) {
+                return $date->between(Carbon::parse($l->start_date), Carbon::parse($l->end_date));
+            });
+
+            $gajiPokok = 0;
+            $tunjangan = 0;
+            $potongan = 0;
+            $status = 'alpha';
+            $checkIn = '-';
+            $checkOut = '-';
+
+            if ($leave) {
+                if ($leave->type === 'cuti') {
+                    $gajiPokok = $gajiPokokHarian;
+                    $tunjangan = 0;
+                    $status = 'cuti';
+                } else {
+                    $gajiPokok = 0;
+                    $tunjangan = 0;
+                    $status = 'izin';
+                }
+            } elseif ($attendance) {
+                $checkIn = $attendance->check_in_time ? Carbon::parse($attendance->check_in_time)->format('H:i:s') : '-';
+                $checkOut = $attendance->check_out_time ? Carbon::parse($attendance->check_out_time)->format('H:i:s') : '-';
+
+                if (!$attendance->check_out_time) {
+                    if ($date->isToday()) {
+                        $status = 'pending';
+                        $gajiPokok = 0;
+                        $tunjangan = 0;
+                        $potongan = 0;
+                    } else {
+                        $status = 'alpha';
+                        $gajiPokok = 0;
+                        $tunjangan = 0;
+                        $potongan = 0;
+                    }
+                } else {
+                    $potonganCheckIn = $attendance->potongan_check_in ?? 0;
+                    $potonganCheckOut = $attendance->potongan_check_out ?? 0;
+
+                    if ($attendance->status_check_in === 'Alpha') {
+                        $gajiPokok = 0;
+                        $tunjangan = 0;
+                        $potongan = 0;
+                        $status = 'alpha';
+                    } else {
+                        $gajiPokok = $gajiPokokHarian;
+                        $tunjangan = $tunjanganHarian;
+                        $potongan = $potonganCheckIn + $potonganCheckOut;
+
+                        if ($attendance->status_check_in === 'Telat' || $attendance->status_check_out === 'Pulang Lebih Awal') {
+                            $status = 'hadir_dengan_potongan';
+                        } else {
+                            $status = 'hadir';
+                        }
+                    }
+                }
+            }
+
+            $totalGajiPokok += $gajiPokok;
+            $totalTunjangan += $tunjangan;
+            $totalPotonganHarian += $potongan;
+
+            $detailPerHari[] = [
+                'date' => $dateStr,
+                'status' => $status,
+                'check_in' => $checkIn,
+                'check_out' => $checkOut,
+                'basic_salary' => $gajiPokok,
+                'allowance' => $tunjangan,
+                'deduction' => $potongan,
+            ];
+        }
+
+        $gajiKotor = $totalGajiPokok + $totalTunjangan;
+        $gajiBersih = $gajiKotor - $totalPotonganHarian;
+
+        $totalSemuaPotongan = $totalPotonganHarian;
+        $pajak = 0;
+        
+        if ($endDate->isEndOfMonth()) {
+            $pajak = $pajakBulanan;
+            $gajiBersih -= $pajakBulanan;
+            $totalSemuaPotongan += $pajakBulanan;
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Slip gaji berhasil dihitung',
+            'is_final' => $endDate->isEndOfMonth(),
+            'data' => [
+                'user_id' => $userId,
+                'month' => $month,
+                'year' => $year,
+                'total_basic_salary' => $totalGajiPokok,
+                'total_allowance' => $totalTunjangan,
+                'total_deduction' => $totalPotonganHarian,
+                'tax' => $pajak,
+                'net_salary' => max(0, $gajiBersih),
+                'daily_details' => $detailPerHari
+            ]
+        ], 200);
+
+    } catch (\Exception $e) {
+        \Log::error('Error calculating payslip for admin: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal menghitung slip gaji',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
 }

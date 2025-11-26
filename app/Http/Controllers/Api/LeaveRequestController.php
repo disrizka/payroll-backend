@@ -13,7 +13,6 @@ class LeaveRequestController extends Controller
 {
     public function store(Request $request)
     {
-        // Validasi input
         $request->validate([
             'type' => 'required|in:izin,cuti',
             'reason' => 'required|string',
@@ -28,21 +27,16 @@ class LeaveRequestController extends Controller
         $end   = $request->end_date;
 
 
-        // ============================================================
-        // 🔥 VALIDASI BATAS TOTAL CUTI = 12 HARI / TAHUN
-        // ============================================================
         if ($request->type === 'cuti') {
 
             $year = Carbon::parse($start)->year;
 
-            // Ambil semua cuti tahun ini (pending + approved)
             $cutiAktif = LeaveRequest::where('user_id', $userId)
                 ->where('type', 'cuti')
                 ->whereYear('start_date', $year)
                 ->whereIn('status', ['approved', 'pending'])
                 ->get();
 
-            // Hitung jumlah hari cuti yang sudah terpakai
             $totalHariCuti = 0;
 
             foreach ($cutiAktif as $c) {
@@ -51,10 +45,8 @@ class LeaveRequestController extends Controller
                 $totalHariCuti += $startC->diffInDays($endC) + 1;
             }
 
-            // Hitung hari cuti dari pengajuan baru
             $hariPengajuanBaru = Carbon::parse($start)->diffInDays(Carbon::parse($end)) + 1;
 
-            // Jika melewati batas 12 hari → tolak
             if (($totalHariCuti + $hariPengajuanBaru) > 12) {
                 return response()->json([
                     'message' => 'Total hari cuti Anda telah melebihi batas 12 hari/tahun. 
@@ -63,10 +55,6 @@ class LeaveRequestController extends Controller
             }
         }
 
-
-        // ============================================================
-        // ❌ VALIDASI: TIDAK BOLEH PENGAJUAN JIKA ADA ABSENSI
-        // ============================================================
         $existingAttendance = Attendance::where('user_id', $userId)
             ->whereBetween('date', [$start, $end])
             ->exists();
@@ -78,9 +66,6 @@ class LeaveRequestController extends Controller
         }
 
 
-        // ============================================================
-        // ❌ VALIDASI OVERLAP CUTI/IZIN (Multi-Hari)
-        // ============================================================
         $existingLeave = LeaveRequest::where('user_id', $userId)
             ->whereIn('status', ['pending', 'approved'])
             ->where(function ($query) use ($start, $end) {
@@ -100,18 +85,12 @@ class LeaveRequestController extends Controller
         }
 
 
-        // ============================================================
-        // Upload File
-        // ============================================================
         $filePath = null;
         if ($request->hasFile('file_proof')) {
             $filePath = $request->file('file_proof')->store('proofs', 'public');
         }
 
 
-        // ============================================================
-        // SIMPAN PENGAJUAN
-        // ============================================================
         LeaveRequest::create([
             'user_id' => $userId,
             'type' => $request->type,

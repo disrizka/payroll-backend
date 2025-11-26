@@ -5,11 +5,11 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Laravel\Sanctum\HasApiTokens; // <-- PASTIKAN BARIS INI ADA
+use Laravel\Sanctum\HasApiTokens; 
 
 class User extends Authenticatable
 {
-    use HasApiTokens, HasFactory, Notifiable; // <-- PASTIKAN HasApiTokens ADA DI SINI
+    use HasApiTokens, HasFactory, Notifiable; 
 
     /**
      * The attributes that are mass assignable.

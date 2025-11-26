@@ -21,7 +21,6 @@ class PayrollController extends Controller
     $startDate = Carbon::create($year, $month, 1)->startOfDay();
     $endDate = $startDate->copy()->endOfMonth();
 
-    // Aturan gaji
     $gajiPokokHarian = 50000;
     $tunjanganHarian = 25000;
     $pajakBulanan = 100000;
@@ -31,18 +30,15 @@ class PayrollController extends Controller
     $totalPotonganHarian = 0;
     $detailPerHari = [];
 
-    // Ambil data attendance
     $attendances = Attendance::where('user_id', $userId)
         ->whereBetween('date', [$startDate, $endDate])
         ->get()
         ->keyBy(fn($i) => Carbon::parse($i->date)->toDateString());
 
-    // Ambil cuti
     $leaves = LeaveRequest::where('user_id', $userId)
         ->where('status', 'approved')
         ->get();
 
-    // Loop harian
     for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
 
         $dateStr = $date->toDateString();
@@ -51,7 +47,6 @@ class PayrollController extends Controller
         $tunjanganHariIni = 0;
         $potonganHariIni = 0;
 
-        // === CEK CUTI ===
         $leaveToday = $leaves->first(function($l) use ($date) {
             return $date->between(Carbon::parse($l->start_date), Carbon::parse($l->end_date));
         });
@@ -69,20 +64,16 @@ class PayrollController extends Controller
 
             $attendance = $attendances[$dateStr];
 
-            // Gaji dasar
             $status = "Hadir";
             $gajiHariIni = $gajiPokokHarian;
 
-            // Hitung potongan real dari database
             $potIn = $attendance->potongan_check_in ?? 0;
             $potOut = $attendance->potongan_check_out ?? 0;
 
             $potonganHariIni = $potIn + $potOut;
 
-            // Gaji final setelah potongan
             $gajiHariIni -= $potonganHariIni;
 
-            // Tunjangan hanya jika hadir lengkap
             if ($attendance->check_in_time && $attendance->check_out_time) {
                 $tunjanganHariIni = $tunjanganHarian;
             }
@@ -103,12 +94,10 @@ class PayrollController extends Controller
         ];
     }
 
-    // Hitungan final
     $gajiKotor = $totalGajiPokok + $totalTunjangan;
     $totalSemuaPotongan = $totalPotonganHarian + $pajakBulanan;
     $gajiBersih = max(0, $gajiKotor - $totalSemuaPotongan);
 
-    // Simpan slip gaji
     $payroll = Payroll::updateOrCreate(
         ['user_id' => $userId, 'month' => $month, 'year' => $year],
         [
