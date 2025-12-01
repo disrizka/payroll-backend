@@ -266,153 +266,6 @@ class AttendanceController extends Controller
         }
     }
 
-    
-    public function calculateLivePayslip($year, $month)
-    {
-        try {
-            $user = Auth::user();
-            $startDate = Carbon::create($year, $month, 1)->startOfDay();
-            $endDate = Carbon::now()->endOfDay();
-
-            if ($startDate->isBefore(Carbon::now()->startOfMonth())) {
-                $endDate = $startDate->copy()->endOfMonth();
-            }
-
-            $gajiPokokHarian = 50000;
-            $tunjanganHarian = 25000;
-            $pajakBulanan = 100000;
-
-            $totalGajiPokok = 0;
-            $totalTunjangan = 0;
-            $totalPotonganHarian = 0;
-            $detailPerHari = [];
-
-            $attendances = Attendance::where('user_id', $user->id)
-                ->whereBetween('date', [$startDate, $endDate])
-                ->get()
-                ->keyBy(fn($item) => Carbon::parse($item->date)->toDateString());
-
-            $leaves = LeaveRequest::where('user_id', $user->id)
-                ->where('status', 'approved')
-                ->whereBetween('start_date', [$startDate, $endDate])
-                ->get();
-
-            for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
-                $dateStr = $date->toDateString();
-                $attendance = $attendances->get($dateStr);
-
-                $leave = $leaves->first(function($l) use ($date) {
-                    return $date->between(Carbon::parse($l->start_date), Carbon::parse($l->end_date));
-                });
-
-                $gajiPokok = 0;
-                $tunjangan = 0;
-                $potongan = 0;
-                $status = 'alpha';
-                $checkIn = '-';
-                $checkOut = '-';
-
-                if ($leave) {
-                    if ($leave->type === 'cuti') {
-                        $gajiPokok = $gajiPokokHarian;
-                        $tunjangan = 0;
-                        $status = 'cuti';
-                    } else {
-                        $gajiPokok = 0;
-                        $tunjangan = 0;
-                        $status = 'izin';
-                    }
-                } elseif ($attendance) {
-                    $checkIn = $attendance->check_in_time ? Carbon::parse($attendance->check_in_time)->format('H:i:s') : '-';
-                    $checkOut = $attendance->check_out_time ? Carbon::parse($attendance->check_out_time)->format('H:i:s') : '-';
-
-                    if (!$attendance->check_out_time) {
-                        if ($date->isToday()) {
-                            $status = 'pending';
-                            $gajiPokok = 0;
-                            $tunjangan = 0;
-                            $potongan = 0;
-                        } else {
-                            $status = 'alpha';
-                            $gajiPokok = 0;
-                            $tunjangan = 0;
-                            $potongan = 0;
-                        }
-                    } else {
-                        $potonganCheckIn = $attendance->potongan_check_in ?? 0;
-                        $potonganCheckOut = $attendance->potongan_check_out ?? 0;
-
-                        if ($attendance->status_check_in === 'Alpha') {
-                            $gajiPokok = 0;
-                            $tunjangan = 0;
-                            $potongan = 0;
-                            $status = 'alpha';
-                        } else {
-                            $gajiPokok = $gajiPokokHarian;
-                            $tunjangan = $tunjanganHarian;
-                            $potongan = $potonganCheckIn + $potonganCheckOut;
-
-                            if ($attendance->status_check_in === 'Telat' || $attendance->status_check_out === 'Pulang Lebih Awal') {
-                                $status = 'hadir_dengan_potongan';
-                            } else {
-                                $status = 'hadir';
-                            }
-                        }
-                    }
-                }
-
-                $totalGajiPokok += $gajiPokok;
-                $totalTunjangan += $tunjangan;
-                $totalPotonganHarian += $potongan;
-
-                $detailPerHari[] = [
-                    'date' => $dateStr,
-                    'status' => $status,
-                    'check_in' => $checkIn,
-                    'check_out' => $checkOut,
-                    'basic_salary' => $gajiPokok,
-                    'allowance' => $tunjangan,
-                    'deduction' => $potongan,
-                ];
-            }
-
-            $gajiKotor = $totalGajiPokok + $totalTunjangan;
-            $gajiBersih = $gajiKotor - $totalPotonganHarian;
-
-            $totalSemuaPotongan = $totalPotonganHarian;
-            $pajak = 0;
-            if ($endDate->isEndOfMonth()) {
-                $pajak = $pajakBulanan;
-                $gajiBersih -= $pajakBulanan;
-                $totalSemuaPotongan += $pajakBulanan;
-            }
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Slip gaji berhasil dihitung',
-                'is_final' => $endDate->isEndOfMonth(),
-                'data' => [
-                    'user_id' => $user->id,
-                    'month' => $month,
-                    'year' => $year,
-                    'total_basic_salary' => $totalGajiPokok,
-                    'total_allowance' => $totalTunjangan,
-                    'total_deduction' => $totalPotonganHarian,
-                    'tax' => $pajak,
-                    'net_salary' => max(0, $gajiBersih),
-                    'daily_details' => $detailPerHari
-                ]
-            ], 200);
-
-        } catch (\Exception $e) {
-            \Log::error('Error calculating payslip: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Gagal menghitung slip gaji',
-                'error' => $e->getMessage()
-            ], 500);
-        }
-    }
 
     public function updatePendingStatus()
     {
@@ -455,6 +308,154 @@ class AttendanceController extends Controller
 
         return 'alpha';
     }
+public function calculateLivePayslip($year, $month)
+{
+    try {
+        $user = Auth::user();
+        $startDate = Carbon::create($year, $month, 1)->startOfDay();
+        $endDate = Carbon::now()->endOfDay();
+
+        if ($startDate->isBefore(Carbon::now()->startOfMonth())) {
+            $endDate = $startDate->copy()->endOfMonth();
+        }
+
+        $gajiPokokHarian = 50000;
+        $tunjanganHarian = 25000;
+        $pajakBulanan = 100000;
+
+        $totalGajiPokok = 0;
+        $totalTunjangan = 0;
+        $totalPotonganHarian = 0;
+        $detailPerHari = [];
+
+        $attendances = Attendance::where('user_id', $user->id)
+            ->whereBetween('date', [$startDate, $endDate])
+            ->get()
+            ->keyBy(fn($item) => Carbon::parse($item->date)->toDateString());
+
+        $leaves = LeaveRequest::where('user_id', $user->id)
+            ->where('status', 'approved')
+            ->whereBetween('start_date', [$startDate, $endDate])
+            ->get();
+
+        for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
+            $dateStr = $date->toDateString();
+            $attendance = $attendances->get($dateStr);
+
+            $leave = $leaves->first(function($l) use ($date) {
+                return $date->between(Carbon::parse($l->start_date), Carbon::parse($l->end_date));
+            });
+
+            $gajiPokok = 0;
+            $tunjangan = 0;
+            $potongan = 0;
+            $status = 'alpha';
+            $checkIn = '-';
+            $checkOut = '-';
+
+            if ($leave) {
+                if ($leave->type === 'cuti') {
+                    $gajiPokok = $gajiPokokHarian;
+                    $tunjangan = 0;
+                    $status = 'cuti';
+                } else {
+                    $gajiPokok = 0;
+                    $tunjangan = 0;
+                    $status = 'izin';
+                }
+            } elseif ($attendance) {
+                $checkIn = $attendance->check_in_time ? Carbon::parse($attendance->check_in_time)->format('H:i:s') : '-';
+                $checkOut = $attendance->check_out_time ? Carbon::parse($attendance->check_out_time)->format('H:i:s') : '-';
+
+                if (!$attendance->check_out_time) {
+                    if ($date->isToday()) {
+                        $status = 'pending';
+                        $gajiPokok = 0;
+                        $tunjangan = 0;
+                        $potongan = 0;
+                    } else {
+                        $status = 'alpha';
+                        $gajiPokok = 0;
+                        $tunjangan = 0;
+                        $potongan = 0;
+                    }
+                } else {
+                    $potonganCheckIn = $attendance->potongan_check_in ?? 0;
+                    $potonganCheckOut = $attendance->potongan_check_out ?? 0;
+
+                    if ($attendance->status_check_in === 'Alpha') {
+                        $gajiPokok = 0;
+                        $tunjangan = 0;
+                        $potongan = 0;
+                        $status = 'alpha';
+                    } else {
+                        $gajiPokok = $gajiPokokHarian;
+                        $tunjangan = $tunjanganHarian;
+                        $potongan = $potonganCheckIn + $potonganCheckOut;
+
+                        if ($attendance->status_check_in === 'Telat' || $attendance->status_check_out === 'Pulang Lebih Awal') {
+                            $status = 'hadir_dengan_potongan';
+                        } else {
+                            $status = 'hadir';
+                        }
+                    }
+                }
+            }
+
+            $totalGajiPokok += $gajiPokok;
+            $totalTunjangan += $tunjangan;
+            $totalPotonganHarian += $potongan;
+
+            $detailPerHari[] = [
+                'date' => $dateStr,
+                'status' => $status,
+                'check_in' => $checkIn,
+                'check_out' => $checkOut,
+                'basic_salary' => $gajiPokok,
+                'allowance' => $tunjangan,
+                'deduction' => $potongan,
+            ];
+        }
+
+        $gajiKotor = $totalGajiPokok + $totalTunjangan;
+        
+        // 🔧 FIX: Hanya potong pajak jika ada pendapatan
+        $pajak = 0;
+        if ($endDate->isEndOfMonth() && $gajiKotor > 0) {
+            $pajak = $pajakBulanan;
+        }
+        
+        $totalSemuaPotongan = $totalPotonganHarian + $pajak;
+        
+        // 🔧 FIX: Gaji bersih tidak boleh negatif
+        $gajiBersih = max(0, $gajiKotor - $totalSemuaPotongan);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Slip gaji berhasil dihitung',
+            'is_final' => $endDate->isEndOfMonth(),
+            'data' => [
+                'user_id' => $user->id,
+                'month' => $month,
+                'year' => $year,
+                'total_basic_salary' => $totalGajiPokok,
+                'total_allowance' => $totalTunjangan,
+                'total_deduction' => $totalPotonganHarian,
+                'tax' => $pajak,
+                'net_salary' => $gajiBersih,
+                'daily_details' => $detailPerHari
+            ]
+        ], 200);
+
+    } catch (\Exception $e) {
+        \Log::error('Error calculating payslip: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal menghitung slip gaji',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
 
 public function calculateLivePayslipForAdmin($userId, $year, $month)
 {
@@ -567,16 +568,17 @@ public function calculateLivePayslipForAdmin($userId, $year, $month)
         }
 
         $gajiKotor = $totalGajiPokok + $totalTunjangan;
-        $gajiBersih = $gajiKotor - $totalPotonganHarian;
-
-        $totalSemuaPotongan = $totalPotonganHarian;
-        $pajak = 0;
         
-        if ($endDate->isEndOfMonth()) {
+        // 🔧 FIX: Hanya potong pajak jika ada pendapatan
+        $pajak = 0;
+        if ($endDate->isEndOfMonth() && $gajiKotor > 0) {
             $pajak = $pajakBulanan;
-            $gajiBersih -= $pajakBulanan;
-            $totalSemuaPotongan += $pajakBulanan;
         }
+        
+        $totalSemuaPotongan = $totalPotonganHarian + $pajak;
+        
+        // 🔧 FIX: Gaji bersih tidak boleh negatif
+        $gajiBersih = max(0, $gajiKotor - $totalSemuaPotongan);
 
         return response()->json([
             'success' => true,
@@ -590,7 +592,7 @@ public function calculateLivePayslipForAdmin($userId, $year, $month)
                 'total_allowance' => $totalTunjangan,
                 'total_deduction' => $totalPotonganHarian,
                 'tax' => $pajak,
-                'net_salary' => max(0, $gajiBersih),
+                'net_salary' => $gajiBersih,
                 'daily_details' => $detailPerHari
             ]
         ], 200);
@@ -604,4 +606,5 @@ public function calculateLivePayslipForAdmin($userId, $year, $month)
         ], 500);
     }
 }
+
 }
