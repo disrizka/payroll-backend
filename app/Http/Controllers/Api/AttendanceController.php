@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Attendance;
 use App\Models\LeaveRequest;
+use App\Models\Payroll; 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
@@ -12,6 +13,11 @@ use App\Models\User;
 
 class AttendanceController extends Controller
 {
+      // 🔧 Konstanta gaji
+    private const GAJI_POKOK_HARIAN = 50000;
+    private const TUNJANGAN_HARIAN = 25000;
+    private const PAJAK_BULANAN = 100000;
+
     public function checkIn(Request $request)
     {
         $request->validate([
@@ -88,7 +94,7 @@ class AttendanceController extends Controller
         ], 201);
     }
 
-
+    // 🔥 METHOD CHECKOUT - DENGAN AUTO UPDATE PAYROLL
     public function checkOut(Request $request)
     {
         $request->validate([
@@ -151,12 +157,126 @@ class AttendanceController extends Controller
             'potongan_check_out' => $potonganCheckOut,
         ]);
 
+        // 🔥 OTOMATIS UPDATE PAYROLL SETELAH CHECKOUT
+        $this->updateMonthlyPayroll($user->id, Carbon::today());
+
         return response()->json([
-            'message' => 'Absen pulang berhasil.',
+            'message' => 'Absen pulang berhasil dan payroll telah diupdate.',
             'data' => $attendance,
             'potongan' => $potonganCheckOut
         ]);
     }
+
+   private function updateMonthlyPayroll($userId, $date)
+{
+    $month = $date->month;
+    $year = $date->year;
+
+    $startDate = Carbon::create($year, $month, 1)->startOfDay();
+    $endDate = Carbon::now()->endOfDay();
+
+    if ($startDate->isBefore(Carbon::now()->startOfMonth())) {
+        $endDate = $startDate->copy()->endOfMonth();
+    }
+
+    $totalGajiPokok = 0;
+    $totalTunjangan = 0;
+    $totalPotonganHarian = 0;
+    $detailPerHari = [];
+
+    $attendances = Attendance::where('user_id', $userId)
+        ->whereBetween('date', [$startDate, $endDate])
+        ->get()
+        ->keyBy(fn($item) => Carbon::parse($item->date)->toDateString());
+
+    // ✅ GANTI QUERY INI
+    $leaves = LeaveRequest::where('user_id', $userId)
+        ->where('status', 'approved')
+        ->where(function($query) use ($startDate, $endDate) {
+            $query->where(function($q) use ($startDate, $endDate) {
+                $q->whereBetween('start_date', [$startDate, $endDate]);
+            })
+            ->orWhere(function($q) use ($startDate, $endDate) {
+                $q->whereBetween('end_date', [$startDate, $endDate]);
+            })
+            ->orWhere(function($q) use ($startDate, $endDate) {
+                $q->where('start_date', '<=', $startDate)
+                  ->where('end_date', '>=', $endDate);
+            });
+        })
+        ->get();
+
+    for ($d = $startDate->copy(); $d->lte($endDate); $d->addDay()) {
+        $dateStr = $d->toDateString();
+        $attendance = $attendances->get($dateStr);
+
+        $leave = $leaves->first(function($l) use ($d) {
+            return $d->between(Carbon::parse($l->start_date), Carbon::parse($l->end_date));
+        });
+
+        $gajiPokok = 0;
+        $tunjangan = 0;
+        $potongan = 0;
+        $status = 'alpha';
+
+        if ($leave) {
+            if ($leave->type === 'cuti') {
+                $gajiPokok = self::GAJI_POKOK_HARIAN;
+                $status = 'cuti';
+            } else {
+                $status = 'izin';
+            }
+        } elseif ($attendance && $attendance->check_out_time) {
+            $potonganCheckIn = $attendance->potongan_check_in ?? 0;
+            $potonganCheckOut = $attendance->potongan_check_out ?? 0;
+
+            if ($attendance->status_check_in === 'Alpha' || $attendance->status_check_out === 'Tidak Hadir') {
+                $gajiPokok = 0;
+                $tunjangan = 0;
+                $status = 'alpha';
+            } else {
+                $gajiPokok = self::GAJI_POKOK_HARIAN;
+                $tunjangan = self::TUNJANGAN_HARIAN;
+                $potongan = $potonganCheckIn + $potonganCheckOut;
+                $status = 'hadir';
+            }
+        }
+
+        $totalGajiPokok += $gajiPokok;
+        $totalTunjangan += $tunjangan;
+        $totalPotonganHarian += $potongan;
+
+        $detailPerHari[] = [
+            'tanggal' => $dateStr,
+            'status' => $status,
+            'gaji_harian' => $gajiPokok,
+            'tunjangan_harian' => $tunjangan,
+            'potongan_harian' => $potongan,
+        ];
+    }
+
+    $gajiKotor = $totalGajiPokok + $totalTunjangan;
+    
+    $pajak = 0;
+    if ($endDate->isEndOfMonth() && $gajiKotor > 0) {
+        $pajak = self::PAJAK_BULANAN;
+    }
+    
+    $totalSemuaPotongan = $totalPotonganHarian + $pajak;
+    $gajiBersih = max(0, $gajiKotor - $totalSemuaPotongan);
+
+    Payroll::updateOrCreate(
+        ['user_id' => $userId, 'month' => $month, 'year' => $year],
+        [
+            'total_gaji_pokok' => $totalGajiPokok,
+            'total_tunjangan' => $totalTunjangan,
+            'total_potongan' => $totalSemuaPotongan,
+            'pajak' => $pajak,
+            'gaji_bersih' => $gajiBersih,
+            'detail' => json_encode($detailPerHari)
+        ]
+    );
+}
 
     public function history()
     {
@@ -333,9 +453,21 @@ public function calculateLivePayslip($year, $month)
             ->get()
             ->keyBy(fn($item) => Carbon::parse($item->date)->toDateString());
 
+        // ✅ GANTI QUERY INI
         $leaves = LeaveRequest::where('user_id', $user->id)
             ->where('status', 'approved')
-            ->whereBetween('start_date', [$startDate, $endDate])
+            ->where(function($query) use ($startDate, $endDate) {
+                $query->where(function($q) use ($startDate, $endDate) {
+                    $q->whereBetween('start_date', [$startDate, $endDate]);
+                })
+                ->orWhere(function($q) use ($startDate, $endDate) {
+                    $q->whereBetween('end_date', [$startDate, $endDate]);
+                })
+                ->orWhere(function($q) use ($startDate, $endDate) {
+                    $q->where('start_date', '<=', $startDate)
+                      ->where('end_date', '>=', $endDate);
+                });
+            })
             ->get();
 
         for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
@@ -419,15 +551,12 @@ public function calculateLivePayslip($year, $month)
 
         $gajiKotor = $totalGajiPokok + $totalTunjangan;
         
-        // 🔧 FIX: Hanya potong pajak jika ada pendapatan
         $pajak = 0;
         if ($endDate->isEndOfMonth() && $gajiKotor > 0) {
             $pajak = $pajakBulanan;
         }
         
         $totalSemuaPotongan = $totalPotonganHarian + $pajak;
-        
-        // 🔧 FIX: Gaji bersih tidak boleh negatif
         $gajiBersih = max(0, $gajiKotor - $totalSemuaPotongan);
 
         return response()->json([
@@ -483,9 +612,21 @@ public function calculateLivePayslipForAdmin($userId, $year, $month)
             ->get()
             ->keyBy(fn($item) => Carbon::parse($item->date)->toDateString());
 
+        // ✅ GANTI QUERY INI
         $leaves = LeaveRequest::where('user_id', $userId)
             ->where('status', 'approved')
-            ->whereBetween('start_date', [$startDate, $endDate])
+            ->where(function($query) use ($startDate, $endDate) {
+                $query->where(function($q) use ($startDate, $endDate) {
+                    $q->whereBetween('start_date', [$startDate, $endDate]);
+                })
+                ->orWhere(function($q) use ($startDate, $endDate) {
+                    $q->whereBetween('end_date', [$startDate, $endDate]);
+                })
+                ->orWhere(function($q) use ($startDate, $endDate) {
+                    $q->where('start_date', '<=', $startDate)
+                      ->where('end_date', '>=', $endDate);
+                });
+            })
             ->get();
 
         for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
@@ -569,15 +710,12 @@ public function calculateLivePayslipForAdmin($userId, $year, $month)
 
         $gajiKotor = $totalGajiPokok + $totalTunjangan;
         
-        // 🔧 FIX: Hanya potong pajak jika ada pendapatan
         $pajak = 0;
         if ($endDate->isEndOfMonth() && $gajiKotor > 0) {
             $pajak = $pajakBulanan;
         }
         
         $totalSemuaPotongan = $totalPotonganHarian + $pajak;
-        
-        // 🔧 FIX: Gaji bersih tidak boleh negatif
         $gajiBersih = max(0, $gajiKotor - $totalSemuaPotongan);
 
         return response()->json([
@@ -602,6 +740,282 @@ public function calculateLivePayslipForAdmin($userId, $year, $month)
         return response()->json([
             'success' => false,
             'message' => 'Gagal menghitung slip gaji',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function getMonthlyStats()
+{
+    try {
+        $user = Auth::user();
+        $now = Carbon::now();
+        
+        // Untuk bulan ini (izin dan alpha)
+        $startOfMonth = $now->copy()->startOfMonth();
+        $endOfMonth = $now->copy()->endOfDay();
+
+        // Untuk tahun ini (cuti)
+        $startOfYear = $now->copy()->startOfYear();
+        $endOfYear = $now->copy()->endOfYear();
+
+        // Ambil attendance bulan ini
+        $attendances = Attendance::where('user_id', $user->id)
+            ->whereBetween('date', [$startOfMonth, $endOfMonth])
+            ->get();
+
+        // Ambil leave requests bulan ini untuk izin
+        $leavesThisMonth = LeaveRequest::where('user_id', $user->id)
+            ->where('status', 'approved')
+            ->where(function($query) use ($startOfMonth, $endOfMonth) {
+                $query->where(function($q) use ($startOfMonth, $endOfMonth) {
+                    $q->whereBetween('start_date', [$startOfMonth, $endOfMonth]);
+                })
+                ->orWhere(function($q) use ($startOfMonth, $endOfMonth) {
+                    $q->whereBetween('end_date', [$startOfMonth, $endOfMonth]);
+                })
+                ->orWhere(function($q) use ($startOfMonth, $endOfMonth) {
+                    $q->where('start_date', '<=', $startOfMonth)
+                      ->where('end_date', '>=', $endOfMonth);
+                });
+            })
+            ->get();
+
+        // Ambil leave requests tahun ini untuk cuti
+        $leavesThisYear = LeaveRequest::where('user_id', $user->id)
+            ->where('status', 'approved')
+            ->where('type', 'cuti')
+            ->where(function($query) use ($startOfYear, $endOfYear) {
+                $query->where(function($q) use ($startOfYear, $endOfYear) {
+                    $q->whereBetween('start_date', [$startOfYear, $endOfYear]);
+                })
+                ->orWhere(function($q) use ($startOfYear, $endOfYear) {
+                    $q->whereBetween('end_date', [$startOfYear, $endOfYear]);
+                })
+                ->orWhere(function($q) use ($startOfYear, $endOfYear) {
+                    $q->where('start_date', '<=', $startOfYear)
+                      ->where('end_date', '>=', $endOfYear);
+                });
+            })
+            ->get();
+
+        // Hitung statistik
+        $totalCutiTahunIni = 0;
+        $totalIzinBulanIni = 0;
+        $totalAlphaBulanIni = 0;
+
+        // Hitung cuti per tahun
+        foreach ($leavesThisYear as $leave) {
+            $leaveStart = Carbon::parse($leave->start_date);
+            $leaveEnd = Carbon::parse($leave->end_date);
+            
+            // Batasi ke range tahun ini
+            if ($leaveStart->lt($startOfYear)) {
+                $leaveStart = $startOfYear->copy();
+            }
+            if ($leaveEnd->gt($endOfYear)) {
+                $leaveEnd = $endOfYear->copy();
+            }
+            
+            // Hitung hari kerja (skip weekend)
+            $current = $leaveStart->copy();
+            while ($current->lte($leaveEnd)) {
+                if (!$current->isWeekend()) {
+                    $totalCutiTahunIni++;
+                }
+                $current->addDay();
+            }
+        }
+
+        // Hitung izin bulan ini
+        foreach ($leavesThisMonth as $leave) {
+            if ($leave->type === 'izin') {
+                $leaveStart = Carbon::parse($leave->start_date);
+                $leaveEnd = Carbon::parse($leave->end_date);
+                
+                // Batasi ke range bulan ini
+                if ($leaveStart->lt($startOfMonth)) {
+                    $leaveStart = $startOfMonth->copy();
+                }
+                if ($leaveEnd->gt($endOfMonth)) {
+                    $leaveEnd = $endOfMonth->copy();
+                }
+                
+                // Hitung hari kerja (skip weekend)
+                $current = $leaveStart->copy();
+                while ($current->lte($leaveEnd)) {
+                    if (!$current->isWeekend()) {
+                        $totalIzinBulanIni++;
+                    }
+                    $current->addDay();
+                }
+            }
+        }
+
+        // Hitung alpha bulan ini
+        $currentDate = $startOfMonth->copy();
+        while ($currentDate->lte($endOfMonth)) {
+            // Skip weekend
+            if ($currentDate->isWeekend()) {
+                $currentDate->addDay();
+                continue;
+            }
+
+            // Skip hari ini dan masa depan
+            if ($currentDate->gte(Carbon::today())) {
+                $currentDate->addDay();
+                continue;
+            }
+
+            // Cek apakah ada attendance
+            $hasAttendance = $attendances->contains(function($att) use ($currentDate) {
+                return Carbon::parse($att->date)->isSameDay($currentDate) 
+                    && $att->check_out_time !== null;
+            });
+
+            // Cek apakah ada leave (cuti atau izin)
+            $hasLeave = $leavesThisMonth->contains(function($leave) use ($currentDate) {
+                return $currentDate->between(
+                    Carbon::parse($leave->start_date),
+                    Carbon::parse($leave->end_date)
+                );
+            });
+
+            // Jika tidak ada attendance dan tidak ada leave = alpha
+            if (!$hasAttendance && !$hasLeave) {
+                $totalAlphaBulanIni++;
+            }
+
+            $currentDate->addDay();
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'cuti_tahun_ini' => $totalCutiTahunIni,
+                'izin_bulan_ini' => $totalIzinBulanIni,
+                'alpha_bulan_ini' => $totalAlphaBulanIni,
+                'sisa_cuti' => max(0, 12 - $totalCutiTahunIni),
+            ]
+        ], 200);
+
+    } catch (\Exception $e) {
+        \Log::error('Error getting monthly stats: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal mengambil statistik',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function getYearlyStats($year)
+{
+    try {
+        $user = Auth::user();
+        
+        $startDate = Carbon::create($year, 1, 1)->startOfDay();
+        $endDate = Carbon::create($year, 12, 31)->endOfDay();
+        
+        // Jika tahun yang diminta adalah tahun sekarang, batasi sampai hari ini
+        if ($year == Carbon::now()->year) {
+            $endDate = Carbon::now()->endOfDay();
+        }
+
+        // Ambil semua attendance dalam 1 tahun
+        $attendances = Attendance::where('user_id', $user->id)
+            ->whereBetween('date', [$startDate, $endDate])
+            ->get();
+
+        // Ambil semua leave requests yang approved dalam 1 tahun
+        $leaves = LeaveRequest::where('user_id', $user->id)
+            ->where('status', 'approved')
+            ->where(function($query) use ($startDate, $endDate) {
+                $query->where(function($q) use ($startDate, $endDate) {
+                    $q->whereBetween('start_date', [$startDate, $endDate]);
+                })
+                ->orWhere(function($q) use ($startDate, $endDate) {
+                    $q->whereBetween('end_date', [$startDate, $endDate]);
+                })
+                ->orWhere(function($q) use ($startDate, $endDate) {
+                    $q->where('start_date', '<=', $startDate)
+                      ->where('end_date', '>=', $endDate);
+                });
+            })
+            ->get();
+
+        // Hitung statistik
+        $totalCuti = 0;
+        $totalIzin = 0;
+        $totalAlpha = 0;
+
+        // Hitung dari attendance
+        foreach ($attendances as $att) {
+            $statusCheckIn = strtolower($att->status_check_in ?? '');
+            
+            if ($statusCheckIn === 'cuti') {
+                $totalCuti++;
+            } elseif ($statusCheckIn === 'izin') {
+                $totalIzin++;
+            } elseif (!$att->check_out_time && Carbon::parse($att->date)->lt(Carbon::today())) {
+                // Jika tidak ada checkout dan tanggalnya sudah lewat = alpha
+                $totalAlpha++;
+            } elseif ($statusCheckIn === 'alpha') {
+                $totalAlpha++;
+            }
+        }
+
+        // Hitung hari-hari yang tidak ada attendance sama sekali (alpha)
+        $currentDate = $startDate->copy();
+        while ($currentDate->lte($endDate)) {
+            // Skip weekend (Sabtu & Minggu)
+            if ($currentDate->isWeekend()) {
+                $currentDate->addDay();
+                continue;
+            }
+
+            // Skip hari ini dan masa depan
+            if ($currentDate->gte(Carbon::today())) {
+                $currentDate->addDay();
+                continue;
+            }
+
+            // Cek apakah ada attendance di tanggal ini
+            $hasAttendance = $attendances->contains(function($att) use ($currentDate) {
+                return Carbon::parse($att->date)->isSameDay($currentDate);
+            });
+
+            // Cek apakah ada leave di tanggal ini
+            $hasLeave = $leaves->contains(function($leave) use ($currentDate) {
+                return $currentDate->between(
+                    Carbon::parse($leave->start_date),
+                    Carbon::parse($leave->end_date)
+                );
+            });
+
+            // Jika tidak ada attendance dan tidak ada leave = alpha
+            if (!$hasAttendance && !$hasLeave) {
+                $totalAlpha++;
+            }
+
+            $currentDate->addDay();
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'year' => $year,
+                'total_cuti' => $totalCuti,
+                'total_izin' => $totalIzin,
+                'total_alpha' => $totalAlpha,
+            ]
+        ], 200);
+
+    } catch (\Exception $e) {
+        \Log::error('Error getting yearly stats: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal mengambil statistik tahunan',
             'error' => $e->getMessage()
         ], 500);
     }

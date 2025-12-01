@@ -21,4 +21,8 @@ class Attendance extends Model
         'potongan_check_in',
         'potongan_check_out',
     ];
+      public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
 }
