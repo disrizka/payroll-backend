@@ -112,9 +112,24 @@ class AutoClosePendingAttendance extends Command
             ->get()
             ->keyBy(fn($item) => Carbon::parse($item->date)->toDateString());
 
+        // ✅ FIX: Query yang menangkap cuti lintas bulan
         $leaves = LeaveRequest::where('user_id', $userId)
             ->where('status', 'approved')
-            ->whereBetween('start_date', [$startDate, $endDate])
+            ->where(function($query) use ($startDate, $endDate) {
+                $query->where(function($q) use ($startDate, $endDate) {
+                    // Cuti yang mulai di bulan ini
+                    $q->whereBetween('start_date', [$startDate, $endDate]);
+                })
+                ->orWhere(function($q) use ($startDate, $endDate) {
+                    // Cuti yang berakhir di bulan ini (PENTING untuk cuti lintas bulan!)
+                    $q->whereBetween('end_date', [$startDate, $endDate]);
+                })
+                ->orWhere(function($q) use ($startDate, $endDate) {
+                    // Cuti yang melewati seluruh bulan ini
+                    $q->where('start_date', '<=', $startDate)
+                      ->where('end_date', '>=', $endDate);
+                });
+            })
             ->get();
 
         // Loop setiap hari di bulan ini (sampai hari ini)
