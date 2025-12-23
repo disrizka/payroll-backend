@@ -21,6 +21,10 @@ Route::middleware('auth:sanctum')->group(function () {
         
         Route::post('/create-employee', [AuthController::class, 'createEmployee']);
         Route::get('/employees', [AdminController::class, 'getAllEmployees']);
+        
+        // ⭐ ROUTE BARU: Update Status Karyawan
+        Route::put('/employees/{id}/status', [AdminController::class, 'updateEmployeeStatus']);
+        
         Route::delete('/employees/{id}', [AdminController::class, 'deleteEmployee']);
         
         Route::get('/dashboard', [AdminController::class, 'dashboard']);
@@ -30,7 +34,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/leave-requests/pending', [LeaveRequestController::class, 'getPending']);
         Route::put('/leave-requests/{id}/approve', [LeaveRequestController::class, 'approve']);
         Route::put('/leave-requests/{id}/reject', [LeaveRequestController::class, 'reject']);
-
 
         Route::get('/attendance-history/{userId}', [AttendanceController::class, 'historyForAdmin']);
         Route::get('/employee-history/{userId}', [AdminController::class, 'getEmployeeHistory']);
@@ -55,8 +58,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/payslip-live/{year}/{month}', [AttendanceController::class, 'calculateLivePayslip']);
         Route::get('/payslip/{year}/{month}', [PayrollController::class, 'showForEmployee']);
 
-
         Route::get('/yearly-stats/{year}', [AttendanceController::class, 'getYearlyStats']);
         Route::get('/monthly-stats', [AttendanceController::class, 'getMonthlyStats']);
-            });
+    });
 });

@@ -22,10 +22,39 @@ class AdminController extends Controller
             'pending_requests' => $pendingRequests,
         ]);
     }
-      public function getAllEmployees()
+    
+    public function getAllEmployees()
     {
         $employees = User::where('role', 'karyawan')->orderBy('name')->get();
         return response()->json($employees);
+    }
+
+    // ⭐ METHOD BARU: Update Status Karyawan
+    public function updateEmployeeStatus(Request $request, $id)
+    {
+        $request->validate([
+            'status' => 'required|in:aktif,tidak_aktif',
+        ]);
+
+        $employee = User::find($id);
+
+        if (!$employee) {
+            return response()->json(['message' => 'Karyawan tidak ditemukan.'], 404);
+        }
+
+        if ($employee->role !== 'karyawan') {
+            return response()->json(['message' => 'Tidak bisa mengubah status admin.'], 403);
+        }
+
+        $employee->status = $request->status;
+        $employee->save();
+
+        $statusText = $request->status === 'aktif' ? 'diaktifkan' : 'dinonaktifkan';
+        
+        return response()->json([
+            'message' => "Status karyawan berhasil {$statusText}.",
+            'employee' => $employee
+        ]);
     }
 
     public function deleteEmployee($id)
@@ -44,6 +73,7 @@ class AdminController extends Controller
 
         return response()->json(['message' => 'Karyawan berhasil dihapus.']);
     }
+    
     public function approveLeave($id)
     {
         $leaveRequest = LeaveRequest::find($id);
@@ -66,14 +96,13 @@ class AdminController extends Controller
         return response()->json(['message' => 'Pengajuan berhasil ditolak']);
     }
 
+    public function getEmployeeHistory($userId)
+    {
+        $attendances = \App\Models\Attendance::where('user_id', $userId)->get();
+        $leaveRequests = \App\Models\LeaveRequest::where('user_id', $userId)->get();
+        $combinedData = $attendances->concat($leaveRequests);
+        $sortedData = $combinedData->sortByDesc('created_at');
 
-public function getEmployeeHistory($userId)
-{
-    $attendances = \App\Models\Attendance::where('user_id', $userId)->get();
-    $leaveRequests = \App\Models\LeaveRequest::where('user_id', $userId)->get();
-    $combinedData = $attendances->concat($leaveRequests);
-    $sortedData = $combinedData->sortByDesc('created_at');
-
-    return response()->json($sortedData->values()->all());
-}
+        return response()->json($sortedData->values()->all());
+    }
 }
