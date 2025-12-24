@@ -744,29 +744,58 @@ public function calculateLivePayslipForAdmin($userId, $year, $month)
         ], 500);
     }
 }
-
 public function getMonthlyStats()
 {
     try {
         $user = Auth::user();
         $now = Carbon::now();
         
-        // Untuk bulan ini (izin dan alpha)
+        // 🔥 UNTUK BULAN INI (izin dan alpha)
         $startOfMonth = $now->copy()->startOfMonth();
         $endOfMonth = $now->copy()->endOfDay();
 
-        // Untuk tahun ini (cuti)
+        // 🔥 UNTUK TAHUN INI (cuti)
         $startOfYear = $now->copy()->startOfYear();
         $endOfYear = $now->copy()->endOfYear();
+
+        \Log::info("📅 Calculating stats for user: {$user->id}");
+        \Log::info("📅 Month range: {$startOfMonth} to {$endOfMonth}");
+        \Log::info("📅 Year range: {$startOfYear} to {$endOfYear}");
 
         // Ambil attendance bulan ini
         $attendances = Attendance::where('user_id', $user->id)
             ->whereBetween('date', [$startOfMonth, $endOfMonth])
             ->get();
 
-        // Ambil leave requests bulan ini untuk izin
-        $leavesThisMonth = LeaveRequest::where('user_id', $user->id)
+        \Log::info("📊 Total attendances this month: " . $attendances->count());
+
+        // 🔥 AMBIL SEMUA CUTI TAHUN INI (approved)
+        $cutiThisYear = LeaveRequest::where('user_id', $user->id)
             ->where('status', 'approved')
+            ->where('type', 'cuti')
+            ->where(function($query) use ($startOfYear, $endOfYear) {
+                $query->where(function($q) use ($startOfYear, $endOfYear) {
+                    // Cuti yang mulai di tahun ini
+                    $q->whereBetween('start_date', [$startOfYear, $endOfYear]);
+                })
+                ->orWhere(function($q) use ($startOfYear, $endOfYear) {
+                    // Cuti yang berakhir di tahun ini
+                    $q->whereBetween('end_date', [$startOfYear, $endOfYear]);
+                })
+                ->orWhere(function($q) use ($startOfYear, $endOfYear) {
+                    // Cuti yang melewati seluruh tahun ini
+                    $q->where('start_date', '<=', $startOfYear)
+                      ->where('end_date', '>=', $endOfYear);
+                });
+            })
+            ->get();
+
+        \Log::info("🏖️ Total cuti records this year: " . $cutiThisYear->count());
+
+        // 🔥 AMBIL SEMUA IZIN BULAN INI (approved)
+        $izinThisMonth = LeaveRequest::where('user_id', $user->id)
+            ->where('status', 'approved')
+            ->where('type', 'izin')
             ->where(function($query) use ($startOfMonth, $endOfMonth) {
                 $query->where(function($q) use ($startOfMonth, $endOfMonth) {
                     $q->whereBetween('start_date', [$startOfMonth, $endOfMonth]);
@@ -781,126 +810,141 @@ public function getMonthlyStats()
             })
             ->get();
 
-        // Ambil leave requests tahun ini untuk cuti
-        $leavesThisYear = LeaveRequest::where('user_id', $user->id)
-            ->where('status', 'approved')
-            ->where('type', 'cuti')
-            ->where(function($query) use ($startOfYear, $endOfYear) {
-                $query->where(function($q) use ($startOfYear, $endOfYear) {
-                    $q->whereBetween('start_date', [$startOfYear, $endOfYear]);
-                })
-                ->orWhere(function($q) use ($startOfYear, $endOfYear) {
-                    $q->whereBetween('end_date', [$startOfYear, $endOfYear]);
-                })
-                ->orWhere(function($q) use ($startOfYear, $endOfYear) {
-                    $q->where('start_date', '<=', $startOfYear)
-                      ->where('end_date', '>=', $endOfYear);
-                });
-            })
-            ->get();
+        \Log::info("🤒 Total izin records this month: " . $izinThisMonth->count());
 
-        // Hitung statistik
-        $totalCutiTahunIni = 0;
-        $totalIzinBulanIni = 0;
-        $totalAlphaBulanIni = 0;
-
-        // Hitung cuti per tahun
-        foreach ($leavesThisYear as $leave) {
-            $leaveStart = Carbon::parse($leave->start_date);
-            $leaveEnd = Carbon::parse($leave->end_date);
+        // 🔥 HITUNG HARI CUTI TAHUN INI (SEMUA HARI TERMASUK WEEKEND)
+        $totalHariCuti = 0;
+        foreach ($cutiThisYear as $cuti) {
+            $cutiStart = Carbon::parse($cuti->start_date);
+            $cutiEnd = Carbon::parse($cuti->end_date);
             
             // Batasi ke range tahun ini
-            if ($leaveStart->lt($startOfYear)) {
-                $leaveStart = $startOfYear->copy();
+            if ($cutiStart->lt($startOfYear)) {
+                $cutiStart = $startOfYear->copy();
             }
-            if ($leaveEnd->gt($endOfYear)) {
-                $leaveEnd = $endOfYear->copy();
+            if ($cutiEnd->gt($endOfYear)) {
+                $cutiEnd = $endOfYear->copy();
             }
             
-            // Hitung hari kerja (skip weekend)
-            $current = $leaveStart->copy();
-            while ($current->lte($leaveEnd)) {
-                if (!$current->isWeekend()) {
-                    $totalCutiTahunIni++;
-                }
-                $current->addDay();
-            }
+            // 🔥 HITUNG SEMUA HARI (TERMASUK SABTU-MINGGU)
+            $hariCutiRecord = $cutiStart->diffInDays($cutiEnd) + 1;
+            
+            $totalHariCuti += $hariCutiRecord;
+            
+            \Log::info("🏖️ Cuti ID {$cuti->id}: {$cuti->start_date} → {$cuti->end_date}");
+            \Log::info("   📅 Total hari dihitung: {$hariCutiRecord} hari (termasuk weekend)");
         }
 
-        // Hitung izin bulan ini
-        foreach ($leavesThisMonth as $leave) {
-            if ($leave->type === 'izin') {
-                $leaveStart = Carbon::parse($leave->start_date);
-                $leaveEnd = Carbon::parse($leave->end_date);
-                
-                // Batasi ke range bulan ini
-                if ($leaveStart->lt($startOfMonth)) {
-                    $leaveStart = $startOfMonth->copy();
-                }
-                if ($leaveEnd->gt($endOfMonth)) {
-                    $leaveEnd = $endOfMonth->copy();
-                }
-                
-                // Hitung hari kerja (skip weekend)
-                $current = $leaveStart->copy();
-                while ($current->lte($leaveEnd)) {
-                    if (!$current->isWeekend()) {
-                        $totalIzinBulanIni++;
-                    }
-                    $current->addDay();
-                }
+        \Log::info("🏖️ TOTAL HARI CUTI TAHUN INI: {$totalHariCuti}");
+
+        // 🔥 HITUNG HARI IZIN BULAN INI (SEMUA HARI TERMASUK WEEKEND)
+        $totalHariIzin = 0;
+        foreach ($izinThisMonth as $izin) {
+            $izinStart = Carbon::parse($izin->start_date);
+            $izinEnd = Carbon::parse($izin->end_date);
+            
+            // Batasi ke range bulan ini
+            if ($izinStart->lt($startOfMonth)) {
+                $izinStart = $startOfMonth->copy();
             }
+            if ($izinEnd->gt($endOfMonth)) {
+                $izinEnd = $endOfMonth->copy();
+            }
+            
+            // 🔥 HITUNG SEMUA HARI (TERMASUK SABTU-MINGGU)
+            $hariIzinRecord = $izinStart->diffInDays($izinEnd) + 1;
+            
+            $totalHariIzin += $hariIzinRecord;
+            
+            \Log::info("🤒 Izin ID {$izin->id}: {$izin->start_date} → {$izin->end_date}");
+            \Log::info("   📅 Total hari dihitung: {$hariIzinRecord} hari (termasuk weekend)");
         }
 
-        // Hitung alpha bulan ini
+        \Log::info("🤒 TOTAL HARI IZIN BULAN INI: {$totalHariIzin}");
+
+        // 🔥 HITUNG ALPHA BULAN INI (TERMASUK WEEKEND)
+        $totalAlpha = 0;
         $currentDate = $startOfMonth->copy();
+        
+        \Log::info("🔍 Mulai hitung alpha dari {$startOfMonth->format('Y-m-d')} sampai {$endOfMonth->format('Y-m-d')}");
+        
         while ($currentDate->lte($endOfMonth)) {
-            // Skip weekend
-            if ($currentDate->isWeekend()) {
-                $currentDate->addDay();
-                continue;
-            }
-
-            // Skip hari ini dan masa depan
+            $dateStr = $currentDate->format('Y-m-d');
+            $dayName = $currentDate->locale('id')->dayName;
+            
+            // ⏭️ Skip hari ini dan masa depan
             if ($currentDate->gte(Carbon::today())) {
+                \Log::info("   ⏭️  SKIP: {$dateStr} ({$dayName}) - Masa depan/hari ini");
                 $currentDate->addDay();
                 continue;
             }
 
-            // Cek apakah ada attendance
+            // 🔍 Cek apakah ada attendance yang sudah checkout
             $hasAttendance = $attendances->contains(function($att) use ($currentDate) {
-                return Carbon::parse($att->date)->isSameDay($currentDate) 
-                    && $att->check_out_time !== null;
+                $isSameDay = Carbon::parse($att->date)->isSameDay($currentDate);
+                $hasCheckout = $att->check_out_time !== null;
+                return $isSameDay && $hasCheckout;
             });
 
-            // Cek apakah ada leave (cuti atau izin)
-            $hasLeave = $leavesThisMonth->contains(function($leave) use ($currentDate) {
+            // 🔍 Cek apakah ada cuti (dari data cuti tahun ini)
+            $hasCuti = $cutiThisYear->contains(function($cuti) use ($currentDate) {
                 return $currentDate->between(
-                    Carbon::parse($leave->start_date),
-                    Carbon::parse($leave->end_date)
+                    Carbon::parse($cuti->start_date),
+                    Carbon::parse($cuti->end_date)
                 );
             });
 
-            // Jika tidak ada attendance dan tidak ada leave = alpha
-            if (!$hasAttendance && !$hasLeave) {
-                $totalAlphaBulanIni++;
+            // 🔍 Cek apakah ada izin (dari data izin bulan ini)
+            $hasIzin = $izinThisMonth->contains(function($izin) use ($currentDate) {
+                return $currentDate->between(
+                    Carbon::parse($izin->start_date),
+                    Carbon::parse($izin->end_date)
+                );
+            });
+
+            // 🔴 Jika tidak ada attendance, cuti, dan izin = alpha
+            if (!$hasAttendance && !$hasCuti && !$hasIzin) {
+                $totalAlpha++;
+                \Log::info("   ❌ ALPHA: {$dateStr} ({$dayName}) - Tidak ada attendance/cuti/izin");
+            } else {
+                $status = [];
+                if ($hasAttendance) $status[] = 'hadir';
+                if ($hasCuti) $status[] = 'cuti';
+                if ($hasIzin) $status[] = 'izin';
+                \Log::info("   ✅ OK: {$dateStr} ({$dayName}) - " . implode(', ', $status));
             }
 
             $currentDate->addDay();
         }
 
+        \Log::info("❌ TOTAL ALPHA BULAN INI: {$totalAlpha}");
+
+        // 🔥 HITUNG SISA CUTI (12 - yang sudah terpakai)
+        $sisaCuti = max(0, 12 - $totalHariCuti);
+        
+        \Log::info("🧮 Perhitungan Sisa Cuti:");
+        \Log::info("   Jatah awal: 12 hari");
+        \Log::info("   Sudah terpakai: {$totalHariCuti} hari");
+        \Log::info("   Sisa: {$sisaCuti} hari");
+
+        $result = [
+            'cuti_tahun_ini' => $totalHariCuti,
+            'izin_bulan_ini' => $totalHariIzin,
+            'alpha_bulan_ini' => $totalAlpha,
+            'sisa_cuti' => $sisaCuti,
+        ];
+
+        \Log::info("✅ Final Result: " . json_encode($result));
+
         return response()->json([
             'success' => true,
-            'data' => [
-                'cuti_tahun_ini' => $totalCutiTahunIni,
-                'izin_bulan_ini' => $totalIzinBulanIni,
-                'alpha_bulan_ini' => $totalAlphaBulanIni,
-                'sisa_cuti' => max(0, 12 - $totalCutiTahunIni),
-            ]
+            'data' => $result
         ], 200);
 
     } catch (\Exception $e) {
-        \Log::error('Error getting monthly stats: ' . $e->getMessage());
+        \Log::error('❌ Error getting monthly stats: ' . $e->getMessage());
+        \Log::error('Stack trace: ' . $e->getTraceAsString());
+        
         return response()->json([
             'success' => false,
             'message' => 'Gagal mengambil statistik',
