@@ -22,14 +22,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/create-employee', [AuthController::class, 'createEmployee']);
         Route::get('/employees', [AdminController::class, 'getAllEmployees']);
         
-        // ⭐ ROUTE BARU: Update Status Karyawan
         Route::put('/employees/{id}/status', [AdminController::class, 'updateEmployeeStatus']);
         
         Route::delete('/employees/{id}', [AdminController::class, 'deleteEmployee']);
         
         Route::get('/dashboard', [AdminController::class, 'dashboard']);
         
-        // ✅ LEAVE REQUEST MANAGEMENT (Updated)
+        // ✅ LEAVE REQUEST MANAGEMENT
         Route::get('/leave-requests', [LeaveRequestController::class, 'index']);
         Route::get('/leave-requests/pending', [LeaveRequestController::class, 'getPending']);
         Route::put('/leave-requests/{id}/approve', [LeaveRequestController::class, 'approve']);
@@ -42,6 +41,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/payslip/{userId}/{year}/{month}', [PayrollController::class, 'showForAdmin']);
         
         Route::get('/payslip-live/{userId}/{year}/{month}', [AttendanceController::class, 'calculateLivePayslipForAdmin']);
+
+        // ⚡ NEW OPTIMIZED ENDPOINTS
+        Route::get('/yearly-salary/{year}', [AdminController::class, 'getYearlyTotalSalary']);
+        Route::get('/top-three-yearly/{year}', [AdminController::class, 'getTopThreeYearly']);
     });
 
     // ✅ EMPLOYEE ROUTES
