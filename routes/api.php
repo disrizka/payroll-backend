@@ -63,5 +63,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::get('/yearly-stats/{year}', [AttendanceController::class, 'getYearlyStats']);
         Route::get('/monthly-stats', [AttendanceController::class, 'getMonthlyStats']);
+
+        
     });
 });
