@@ -10,6 +10,7 @@ use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Barryvdh\DomPDF\Facade\Pdf; // 👈 Tambahkan ini
 
 class PayrollController extends Controller
 {
@@ -96,11 +97,9 @@ class PayrollController extends Controller
 
         $gajiKotor = $totalGajiPokok + $totalTunjangan;
         
-        // 🔧 FIX: Hanya potong pajak jika ada pendapatan
         $pajakDipotong = $gajiKotor > 0 ? $pajakBulanan : 0;
         $totalSemuaPotongan = $totalPotonganHarian + $pajakDipotong;
         
-        // 🔧 FIX: Gaji bersih tidak boleh negatif
         $gajiBersih = max(0, $gajiKotor - $totalSemuaPotongan);
 
         $payroll = Payroll::updateOrCreate(
@@ -116,6 +115,93 @@ class PayrollController extends Controller
         );
 
         return response()->json(['message' => 'Slip gaji berhasil dibuat.', 'data' => $payroll]);
+    }
+
+    // 🔥 METHOD BARU: Generate PDF untuk Karyawan
+    public function generatePdfForEmployee($year, $month)
+    {
+        try {
+            $user = Auth::user();
+            
+            // Ambil data slip gaji dari endpoint live
+            $controller = new AttendanceController();
+            $response = $controller->calculateLivePayslip($year, $month);
+            $responseData = $response->getData();
+            
+            if (!$responseData->success) {
+                return response()->json([
+                    'message' => 'Gagal mengambil data slip gaji'
+                ], 404);
+            }
+            
+            $slipGaji = $responseData->data;
+            
+            // Format periode
+            $periode = Carbon::create($year, $month, 1)->locale('id')->isoFormat('MMMM YYYY');
+            
+            // Generate PDF
+            $pdf = Pdf::loadView('pdf.slip-gaji', [
+                'slipGaji' => $slipGaji,
+                'periode' => $periode,
+                'user' => $user,
+                'tanggalCetak' => Carbon::now()->locale('id')->isoFormat('D MMMM YYYY')
+            ]);
+            
+            // Set paper size dan orientation
+            $pdf->setPaper('a4', 'portrait');
+            
+            // Return PDF sebagai download
+            return $pdf->download("Slip_Gaji_{$periode}.pdf");
+            
+        } catch (\Exception $e) {
+            \Log::error('Error generating PDF: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Gagal membuat PDF',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // 🔥 METHOD BARU: Stream PDF untuk preview
+    public function streamPdfForEmployee($year, $month)
+    {
+        try {
+            $user = Auth::user();
+            
+            // Ambil data slip gaji
+            $controller = new AttendanceController();
+            $response = $controller->calculateLivePayslip($year, $month);
+            $responseData = $response->getData();
+            
+            if (!$responseData->success) {
+                return response()->json([
+                    'message' => 'Gagal mengambil data slip gaji'
+                ], 404);
+            }
+            
+            $slipGaji = $responseData->data;
+            $periode = Carbon::create($year, $month, 1)->locale('id')->isoFormat('MMMM YYYY');
+            
+            // Generate PDF
+            $pdf = Pdf::loadView('pdf.slip-gaji', [
+                'slipGaji' => $slipGaji,
+                'periode' => $periode,
+                'user' => $user,
+                'tanggalCetak' => Carbon::now()->locale('id')->isoFormat('D MMMM YYYY')
+            ]);
+            
+            $pdf->setPaper('a4', 'portrait');
+            
+            // Return PDF untuk preview (stream inline)
+            return $pdf->stream("Slip_Gaji_{$periode}.pdf");
+            
+        } catch (\Exception $e) {
+            \Log::error('Error streaming PDF: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Gagal membuat PDF',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
 }

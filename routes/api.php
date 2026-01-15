@@ -64,6 +64,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/yearly-stats/{year}', [AttendanceController::class, 'getYearlyStats']);
         Route::get('/monthly-stats', [AttendanceController::class, 'getMonthlyStats']);
 
-        
+          // 🔥 ROUTE BARU: PDF Endpoints
+        Route::get('/payslip-pdf/{year}/{month}', [PayrollController::class, 'streamPdfForEmployee']);
+        Route::get('/payslip-pdf-download/{year}/{month}', [PayrollController::class, 'generatePdfForEmployee']);
     });
 });

@@ -55,28 +55,31 @@ class AttendanceController extends Controller
         $potonganCheckIn = 0;
 
         if ($selisihMenit < 0) { 
-            $menitTelat = abs($selisihMenit);
+        $menitTelat = abs($selisihMenit);
 
-            if ($menitTelat >= 1 && $menitTelat <= 10) {
-                $statusCheckIn = 'Tepat Waktu';
-                $potonganCheckIn = 0;
-            } elseif ($menitTelat >= 11 && $menitTelat <= 20) {
-                $statusCheckIn = 'Telat';
-                $potonganCheckIn = 5000;
-            } elseif ($menitTelat >= 21 && $menitTelat <= 30) {
-                $statusCheckIn = 'Telat';
-                $potonganCheckIn = 10000;
-            } elseif ($menitTelat >= 31 && $menitTelat <= 40) {
-                $statusCheckIn = 'Telat';
-                $potonganCheckIn = 15000;
-            } elseif ($menitTelat >= 41 && $menitTelat <= 60) {
-                $statusCheckIn = 'Telat';
-                $potonganCheckIn = 20000;
-            } else {
-                $statusCheckIn = 'Alpha';
-                $potonganCheckIn = 0;
-            }
+        if ($menitTelat >= 1 && $menitTelat <= 10) {
+            $statusCheckIn = 'Tepat Waktu';
+            $potonganCheckIn = 0;
+        } elseif ($menitTelat >= 11 && $menitTelat <= 20) {
+            $statusCheckIn = 'Telat';
+            $potonganCheckIn = 5000;
+        } elseif ($menitTelat >= 21 && $menitTelat <= 30) {
+            $statusCheckIn = 'Telat';
+            $potonganCheckIn = 10000;
+        } elseif ($menitTelat >= 31 && $menitTelat <= 40) {
+            $statusCheckIn = 'Telat';
+            $potonganCheckIn = 15000;
+        } elseif ($menitTelat >= 41 && $menitTelat <= 50) {  
+            $statusCheckIn = 'Telat';
+            $potonganCheckIn = 20000;
+        } elseif ($menitTelat >= 51 && $menitTelat <= 60) {  
+            $statusCheckIn = 'Telat';
+            $potonganCheckIn = 25000;  
+        } else {  
+            $statusCheckIn = 'Alpha';
+            $potonganCheckIn = 0;
         }
+    }
 
         $attendance = Attendance::create([
             'user_id' => $user->id,
@@ -94,7 +97,7 @@ class AttendanceController extends Controller
         ], 201);
     }
 
-    // 🔥 METHOD CHECKOUT - DENGAN AUTO UPDATE PAYROLL
+
     public function checkOut(Request $request)
     {
         $request->validate([
@@ -120,15 +123,15 @@ class AttendanceController extends Controller
             return response()->json(['message' => 'Waktu check-out terlalu awal (minimal 16:00).'], 400);
         }
 
-        $jamNormalPulang = Carbon::parse(Carbon::today()->format('Y-m-d') . ' 17:00:00');
-        $selisihMenit = $jamPulang->diffInMinutes($jamNormalPulang, false); 
+            $jamNormalPulang = Carbon::parse(Carbon::today()->format('Y-m-d') . ' 17:00:00');
+            $selisihMenit = $jamPulang->diffInMinutes($jamNormalPulang, false); 
 
-        $statusCheckOut = 'Tepat Waktu';
-        $potonganCheckOut = 0;
+            $statusCheckOut = 'Tepat Waktu';
+            $potonganCheckOut = 0;
 
         if ($jamPulangTime >= '17:25:00') {
-            $statusCheckOut = 'Overtime';
-            $potonganCheckOut = 0;
+        $statusCheckOut = 'Overtime';
+        $potonganCheckOut = 0;
         } elseif ($selisihMenit > 0) { 
             $menitAwal = $selisihMenit;
 
@@ -144,9 +147,12 @@ class AttendanceController extends Controller
             } elseif ($menitAwal >= 31 && $menitAwal <= 40) {
                 $statusCheckOut = 'Pulang Lebih Awal';
                 $potonganCheckOut = 15000;
-            } elseif ($menitAwal >= 41) {
+            } elseif ($menitAwal >= 41 && $menitAwal <= 50) {  
                 $statusCheckOut = 'Pulang Lebih Awal';
                 $potonganCheckOut = 20000;
+            } elseif ($menitAwal >= 51) {  
+                $statusCheckOut = 'Pulang Lebih Awal';
+                $potonganCheckOut = 25000; 
             }
         }
 
