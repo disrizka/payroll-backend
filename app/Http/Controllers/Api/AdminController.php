@@ -32,7 +32,12 @@ class AdminController extends Controller
     
     public function getAllEmployees()
     {
-        $employees = User::where('role', 'karyawan')->orderBy('name')->get();
+        // ✅ HANYA ambil field yang dibutuhkan
+        $employees = User::select('id', 'name', 'nik', 'jabatan', 'status')
+            ->where('role', 'karyawan')
+            ->orderBy('nik') // ✅ Urutkan berdasarkan NIK bukan nama
+            ->get();
+        
         return response()->json($employees);
     }
 
