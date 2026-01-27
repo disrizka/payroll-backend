@@ -13,90 +13,96 @@ use App\Models\User;
 
 class AttendanceController extends Controller
 {
-      // 🔧 Konstanta gaji
     private const GAJI_POKOK_HARIAN = 50000;
     private const TUNJANGAN_HARIAN = 25000;
     private const PAJAK_BULANAN = 100000;
 
-    public function checkIn(Request $request)
-    {
-        $request->validate([
-            'latitude' => 'required|string',
-            'longitude' => 'required|string',
-        ]);
+  public function checkIn(Request $request)
+{
+    $request->validate([
+        'latitude' => 'required|string',
+        'longitude' => 'required|string',
+    ]);
 
-        $user = Auth::user();
+    $user = Auth::user();
 
-        $existingLeave = LeaveRequest::where('user_id', $user->id)
-            ->where('status', 'approved')
-            ->whereDate('start_date', '<=', Carbon::today())
-            ->whereDate('end_date', '>=', Carbon::today())
-            ->first();
-        if ($existingLeave) {
-            return response()->json(['message' => 'Anda tidak bisa absen karena sedang ' . $existingLeave->type], 400);
-        }
+    $existingLeave = LeaveRequest::where('user_id', $user->id)
+        ->where('status', 'approved')
+        ->whereDate('start_date', '<=', Carbon::today())
+        ->whereDate('end_date', '>=', Carbon::today())
+        ->first();
+    
+    if ($existingLeave) {
+        return response()->json([
+            'message' => 'Anda tidak bisa absen karena sedang ' . $existingLeave->type
+        ], 400);
+    }
 
-        $todayAttendance = Attendance::where('user_id', $user->id)->whereDate('date', Carbon::today())->first();
-        if ($todayAttendance) {
-            return response()->json(['message' => 'Anda sudah melakukan absen masuk hari ini.'], 400);
-        }
+    $todayAttendance = Attendance::where('user_id', $user->id)
+        ->whereDate('date', Carbon::today())
+        ->first();
+    
+    if ($todayAttendance) {
+        return response()->json([
+            'message' => 'Anda sudah melakukan absen masuk hari ini.'
+        ], 400);
+    }
 
-        $jamMasuk = Carbon::now();
-        $jamMasukTime = $jamMasuk->format('H:i:s');
+    $jamSekarang = Carbon::now();
+    $jamSekarangString = $jamSekarang->format('H:i:s');
 
-        if ($jamMasukTime > '09:00:00') {
-            return response()->json(['message' => 'Waktu check-in sudah lewat batas (maksimal 09:00)'], 400);
-        }
+    if ($jamSekarangString > '09:00:00') {
+        return response()->json([
+            'message' => 'Waktu check-in sudah lewat batas (Maksimal 09:00). Anda dianggap Alpha.'
+        ], 400);
+    }
 
-        $jamNormal = Carbon::parse(Carbon::today()->format('Y-m-d') . ' 08:00:00');
-        $selisihMenit = $jamMasuk->diffInMinutes($jamNormal, false); 
+    $jamNormalMasuk = Carbon::today()->setTime(8, 0, 0);
+    
+    $menitTelat = $jamNormalMasuk->diffInMinutes($jamSekarang, false); 
 
-        $statusCheckIn = 'Tepat Waktu';
-        $potonganCheckIn = 0;
+    $statusCheckIn = 'Tepat Waktu';
+    $potonganCheckIn = 0;
 
-        if ($selisihMenit < 0) { 
-        $menitTelat = abs($selisihMenit);
-
-        if ($menitTelat >= 1 && $menitTelat <= 10) {
+    if ($menitTelat > 0) { 
+  
+        if ($menitTelat <= 10) {
             $statusCheckIn = 'Tepat Waktu';
             $potonganCheckIn = 0;
-        } elseif ($menitTelat >= 11 && $menitTelat <= 20) {
+        } elseif ($menitTelat < 21) {
             $statusCheckIn = 'Telat';
             $potonganCheckIn = 5000;
-        } elseif ($menitTelat >= 21 && $menitTelat <= 30) {
+        } elseif ($menitTelat < 31) {
             $statusCheckIn = 'Telat';
             $potonganCheckIn = 10000;
-        } elseif ($menitTelat >= 31 && $menitTelat <= 40) {
+        } elseif ($menitTelat < 41) {
             $statusCheckIn = 'Telat';
             $potonganCheckIn = 15000;
-        } elseif ($menitTelat >= 41 && $menitTelat <= 50) {  
+        } elseif ($menitTelat < 51) {
             $statusCheckIn = 'Telat';
             $potonganCheckIn = 20000;
-        } elseif ($menitTelat >= 51 && $menitTelat <= 60) {  
+        } else {
             $statusCheckIn = 'Telat';
-            $potonganCheckIn = 25000;  
-        } else {  
-            $statusCheckIn = 'Alpha';
-            $potonganCheckIn = 0;
+            $potonganCheckIn = 25000;
         }
     }
 
-        $attendance = Attendance::create([
-            'user_id' => $user->id,
-            'check_in_time' => $jamMasuk,
-            'check_in_location' => $request->latitude . ',' . $request->longitude,
-            'date' => Carbon::today(),
-            'status_check_in' => $statusCheckIn,
-            'potongan_check_in' => $potonganCheckIn,
-        ]);
+    $attendance = Attendance::create([
+        'user_id' => $user->id,
+        'check_in_time' => $jamSekarang,
+        'check_in_location' => $request->latitude . ',' . $request->longitude,
+        'date' => Carbon::today(),
+        'status_check_in' => $statusCheckIn,
+        'potongan_check_in' => $potonganCheckIn,
+    ]);
 
-        return response()->json([
-            'message' => 'Absen masuk berhasil.',
-            'data' => $attendance,
-            'potongan' => $potonganCheckIn
-        ], 201);
-    }
-
+    return response()->json([
+        'message' => 'Absen masuk berhasil.',
+        'data' => $attendance,
+        'status' => $statusCheckIn,
+        'potongan' => $potonganCheckIn
+    ], 201);
+}
 
     public function checkOut(Request $request)
     {
@@ -129,32 +135,32 @@ class AttendanceController extends Controller
             $statusCheckOut = 'Tepat Waktu';
             $potonganCheckOut = 0;
 
-        if ($jamPulangTime >= '17:25:00') {
-        $statusCheckOut = 'Overtime';
-        $potonganCheckOut = 0;
-        } elseif ($selisihMenit > 0) { 
-            $menitAwal = $selisihMenit;
+            if ($jamPulangTime >= '17:25:00') {
+            $statusCheckOut = 'Overtime';
+            $potonganCheckOut = 0;
+            } elseif ($selisihMenit > 0) { 
+                $menitAwal = $selisihMenit;
 
-            if ($menitAwal >= 1 && $menitAwal <= 10) {
-                $statusCheckOut = 'Tepat Waktu';
-                $potonganCheckOut = 0;
-            } elseif ($menitAwal >= 11 && $menitAwal <= 20) {
-                $statusCheckOut = 'Pulang Lebih Awal';
-                $potonganCheckOut = 5000;
-            } elseif ($menitAwal >= 21 && $menitAwal <= 30) {
-                $statusCheckOut = 'Pulang Lebih Awal';
-                $potonganCheckOut = 10000;
-            } elseif ($menitAwal >= 31 && $menitAwal <= 40) {
-                $statusCheckOut = 'Pulang Lebih Awal';
-                $potonganCheckOut = 15000;
-            } elseif ($menitAwal >= 41 && $menitAwal <= 50) {  
-                $statusCheckOut = 'Pulang Lebih Awal';
-                $potonganCheckOut = 20000;
-            } elseif ($menitAwal >= 51) {  
-                $statusCheckOut = 'Pulang Lebih Awal';
-                $potonganCheckOut = 25000; 
+                if ($menitAwal >= 1 && $menitAwal <= 10) {
+                    $statusCheckOut = 'Tepat Waktu';
+                    $potonganCheckOut = 0;
+                } elseif ($menitAwal >= 11 && $menitAwal < 21) {
+                    $statusCheckOut = 'Pulang Lebih Awal';
+                    $potonganCheckOut = 5000;
+                } elseif ($menitAwal >= 21 && $menitAwal < 31) {
+                    $statusCheckOut = 'Pulang Lebih Awal';
+                    $potonganCheckOut = 10000;
+                } elseif ($menitAwal >= 31 && $menitAwal < 41) {
+                    $statusCheckOut = 'Pulang Lebih Awal';
+                    $potonganCheckOut = 15000;
+                } elseif ($menitAwal >= 41 && $menitAwal < 51) {  
+                    $statusCheckOut = 'Pulang Lebih Awal';
+                    $potonganCheckOut = 20000;
+                } elseif ($menitAwal >= 51) {  
+                    $statusCheckOut = 'Pulang Lebih Awal';
+                    $potonganCheckOut = 25000; 
+                }
             }
-        }
 
         $attendance->update([
             'check_out_time' => $jamPulang,
@@ -163,7 +169,6 @@ class AttendanceController extends Controller
             'potongan_check_out' => $potonganCheckOut,
         ]);
 
-        // 🔥 OTOMATIS UPDATE PAYROLL SETELAH CHECKOUT
         $this->updateMonthlyPayroll($user->id, Carbon::today());
 
         return response()->json([
@@ -195,7 +200,6 @@ class AttendanceController extends Controller
         ->get()
         ->keyBy(fn($item) => Carbon::parse($item->date)->toDateString());
 
-    // ✅ GANTI QUERY INI
     $leaves = LeaveRequest::where('user_id', $userId)
         ->where('status', 'approved')
         ->where(function($query) use ($startDate, $endDate) {
@@ -284,6 +288,16 @@ class AttendanceController extends Controller
     );
 }
 
+//   public function history()
+//     {
+//         $user = Auth::user();
+//         $attendances = Attendance::where('user_id', $user->id)
+//             ->orderBy('date', 'desc')
+//             ->get();
+            
+//         return response()->json($attendances);
+//     }
+
     public function history()
     {
         $user = Auth::user();
@@ -302,7 +316,6 @@ class AttendanceController extends Controller
 
         return response()->json($sortedData->values()->all());
     }
-
     
     public function historyForAdmin($userId)
     {
@@ -618,7 +631,6 @@ public function calculateLivePayslipForAdmin($userId, $year, $month)
             ->get()
             ->keyBy(fn($item) => Carbon::parse($item->date)->toDateString());
 
-        // ✅ GANTI QUERY INI
         $leaves = LeaveRequest::where('user_id', $userId)
             ->where('status', 'approved')
             ->where(function($query) use ($startDate, $endDate) {
@@ -756,11 +768,9 @@ public function getMonthlyStats()
         $user = Auth::user();
         $now = Carbon::now();
         
-        // 🔥 UNTUK BULAN INI (izin dan alpha)
         $startOfMonth = $now->copy()->startOfMonth();
         $endOfMonth = $now->copy()->endOfDay();
 
-        // 🔥 UNTUK TAHUN INI (cuti)
         $startOfYear = $now->copy()->startOfYear();
         $endOfYear = $now->copy()->endOfYear();
 
@@ -832,7 +842,6 @@ public function getMonthlyStats()
                 $cutiEnd = $endOfYear->copy();
             }
             
-            // 🔥 HITUNG SEMUA HARI (TERMASUK SABTU-MINGGU)
             $hariCutiRecord = $cutiStart->diffInDays($cutiEnd) + 1;
             
             $totalHariCuti += $hariCutiRecord;
@@ -843,7 +852,6 @@ public function getMonthlyStats()
 
         \Log::info("🏖️ TOTAL HARI CUTI TAHUN INI: {$totalHariCuti}");
 
-        // 🔥 HITUNG HARI IZIN BULAN INI (SEMUA HARI TERMASUK WEEKEND)
         $totalHariIzin = 0;
         foreach ($izinThisMonth as $izin) {
             $izinStart = Carbon::parse($izin->start_date);
@@ -857,7 +865,6 @@ public function getMonthlyStats()
                 $izinEnd = $endOfMonth->copy();
             }
             
-            // 🔥 HITUNG SEMUA HARI (TERMASUK SABTU-MINGGU)
             $hariIzinRecord = $izinStart->diffInDays($izinEnd) + 1;
             
             $totalHariIzin += $hariIzinRecord;
